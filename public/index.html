@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Grid Stability Dashboard</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .metrics {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid #444;
+        }
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+        }
+        .metric-value {
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+        .alert-high { color: #ff4444; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .chart-container { position: relative; height: 300px; }
+        #voltageChart { width: 100% !important; height: 100% !important; }
+        .logs {
+            background: #000;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #333;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            grid-column: span 2;
+            margin-top: 20px;
+        }
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.connected { background: #4caf50; }
+        .status.disconnected { background: #f44336; }
+        h1 { text-align: center; grid-column: span 2; }
+        @media (max-width: 768px) { .container { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <h1>🔌 Real-Time Grid Stability Monitor</h1>
+    
+    <div class="status connected" id="status">Connected to ESP32</div>
+    
+    <div class="container">
+        <div class="metrics">
+            <h2>Sensor Metrics</h2>
+            <div class="metric-row">
+                <span>Voltage</span>
+                <span class="metric-value" id="voltage">0 V</span>
+            </div>
+            <div class="metric-row">
+                <span>Current</span>
+                <span class="metric-value" id="current">0 A</span>
+            </div>
+            <div class="metric-row">
+                <span>Frequency</span>
+                <span class="metric-value" id="frequency">0 Hz</span>
+            </div>
+            <div class="metric-row">
+                <span>Temperature</span>
+                <span class="metric-value" id="temp">0 °C</span>
+            </div>
+            <div class="metric-row">
+                <span>Humidity</span>
+                <span class="metric-value" id="humidity">0 %</span>
+            </div>
+        </div>
+        
+        <div class="metrics">
+            <h2>ML Prediction</h2>
+            <div class="metric-row">
+                <span>Risk Level</span>
+                <span class="metric-value" id="risk">0 %</span>
+            </div>
+            <div class="metric-row">
+                <span>Status</span>
+                <span id="alert">Stable</span>
+            </div>
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="voltageChart"></canvas>
+        </div>
+    </div>
+    
+    <div class="logs" id="logs">
+[23:12:56] Initializing live logs...
+    </div>
+
+    <script>
+        const socket = io();
+        const statusEl = document.getElementById('status');
+        const logsEl = document.getElementById('logs');
+        let chartData = { labels: [], datasets: [] };
+
+        // Chart setup
+        const ctx = document.getElementById('voltageChart').getContext('2d');
+        const chart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Voltage (V)', data: [], borderColor: '#4bc0c0', fill: false },
+                    { label: 'Current (A)', data: [], borderColor: '#ff6384', fill: false },
+                    { label: 'Risk %', data: [], borderColor: '#ffcd56', fill: false }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: { y: { beginAtZero: true } },
+                animation: { duration: 0 }  // Fast updates
+            }
+        });
+
+        // Socket events
+        socket.on('connect', () => {
+            statusEl.textContent = 'Connected to ESP32';
+            statusEl.className = 'status connected';
+            addLog('Connected to ESP32');
+        });
+
+        socket.on('disconnect', () => {
+            statusEl.textContent = 'Disconnected';
+            statusEl.className = 'status disconnected';
+            addLog('Disconnected from ESP32');
+        });
+
+        socket.on('liveData', (data) => {
+            // Update metrics
+            document.getElementById('voltage').textContent = data.voltage.toFixed(2) + ' V';
+            document.getElementById('current').textContent = data.current.toFixed(2) + ' A';
+            document.getElementById('frequency').textContent = data.frequency.toFixed(1) + ' Hz';
+            document.getElementById('temp').textContent = data.temp.toFixed(1) + ' °C';
+            document.getElementById('humidity').textContent = data.humidity.toFixed(1) + ' %';
+            const riskEl = document.getElementById('risk');
+            riskEl.textContent = (data.risk * 100).toFixed(1) + ' %';
+
+            // Alert
+            const alertEl = document.getElementById('alert');
+            if (data.risk > 0.7) {
+                alertEl.textContent = '🚨 ALERT: Instability!';
+                alertEl.className = 'alert-high';
+                // Optional sound
+                const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmUQAlH/+DwvmUQ==');  // Beep sound base64
+                audio.play();
+            } else {
+                alertEl.textContent = '✅ Stable';
+                alertEl.className = '';
+            }
+
+            // Update chart (shift to keep last 20 points)
+            const time = new Date().toLocaleTimeString();
+            chart.data.labels.push(time);
+            chart.data.datasets[0].data.push(data.voltage);  // Voltage
+            chart.data.datasets[1].data.push(data.current);  // Current
+            chart.data.datasets[2].data.push(data.risk * 100);  // Risk %
+            if (chart.data.labels.length > 20) {
+                chart.data.labels.shift();
+                chart.data.datasets.forEach(ds => ds.data.shift());
+            }
+            chart.update('none');  // Instant update
+
+            // Add to logs
+            addLog(`[${time}] V:${data.voltage.toFixed(2)} I:${data.current.toFixed(2)} F:${data.frequency.toFixed(1)} T:${data.temp.toFixed(1)} H:${data.humidity.toFixed(1)} Risk:${(data.risk*100).toFixed(1)}% ${data.risk > 0.7 ? '🚨' : '✅'}`);
+        });
+
+        function addLog(message) {
+            logsEl.innerHTML += message + '\n';
+            logsEl.scrollTop = logsEl.scrollHeight;
+        }
+    </script>
+</body>
+</html>
